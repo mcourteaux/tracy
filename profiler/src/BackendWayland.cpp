@@ -18,6 +18,7 @@
 #include <wayland-client.h>
 #include <wayland-cursor.h>
 #include <wayland-egl.h>
+#include <dlfcn.h>
 
 #include "wayland-xdg-activation-client-protocol.h"
 #include "wayland-xdg-decoration-client-protocol.h"
@@ -1129,19 +1130,21 @@ void Backend::Show()
 
 void Backend::Run()
 {
+    // See #1141 and #1142:
     struct timespec no_deadline{0};
+    auto fn_wl_display_dispatch_timeout = (int ( * )( struct wl_display*, const timespec* ))dlsym( RTLD_DEFAULT, "wl_display_dispatch_timeout" );
+
     wl_display_dispatch( s_dpy );
     while( s_running )
     {
-        // See discussion in PR #1141, and this libwayland commit:
-        // https://gitlab.freedesktop.org/wayland/wayland/-/commit/ddd348da7ea0889056843cf252729185d306b7b8
-        // Once this version of libwayland is rolled out for long enough on all distros, we can delete this other branch
-        // and always assume the new protocol function with timeout exists.
-#if ( WAYLAND_VERSION_MAJOR > 1 ) || ( WAYLAND_VERSION_MAJOR == 1 && WAYLAND_VERSION_MINOR >= 24 )
-        if( wl_display_dispatch_timeout( s_dpy, &no_deadline ) == -1 ) break;
-#else
-        if( wl_display_dispatch( s_dpy ) == -1 ) break;
-#endif
+        if( fn_wl_display_dispatch_timeout )
+        {
+            if( fn_wl_display_dispatch_timeout( s_dpy, &no_deadline ) == -1 ) break;
+        }
+        else
+        {
+            if( wl_display_dispatch( s_dpy ) == -1 ) break;
+        }
 
         if( tracy::s_config.focusLostLimit && !s_hasFocus ) std::this_thread::sleep_for( std::chrono::milliseconds( 50 ) );
 
